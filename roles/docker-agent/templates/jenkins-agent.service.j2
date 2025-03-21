@@ -1,0 +1,20 @@
+[Unit]
+Description=Jenkins Agent (Docker)
+Wants=network.target
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+Environment="JENKINS_HOME=/var/lib/jenkins"
+Environment="AGENT_NAME=docker-agent"
+WorkingDirectory=/var/lib/jenkins
+ReadWritePaths=/var/lib/jenkins
+ExecStart=/bin/bash /var/lib/jenkins/service.sh
+Restart=always
+RestartSec=10
+StartLimitInterval=0
+
+[Install]
+WantedBy=multi-user.target

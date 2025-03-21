@@ -1,0 +1,52 @@
+---
+- name: Set Private IPs
+  hosts: all
+  become: yes
+  gather_facts: yes
+  tasks:
+    - name: Set private IPs as facts for all hosts
+      set_fact:
+        host_private_ip: "{{ ansible_default_ipv4.address }}"
+
+- name: Configure Jenkins Master
+  hosts: tag_Purpose_jenkins
+  become: yes
+  vars:
+    jenkins_home: /var/jenkins_home
+    jenkins_master_ip: "{{ hostvars[groups['tag_Purpose_jenkins'][0]]['ansible_default_ipv4']['address'] }}"
+  vars_files:
+    - roles/jenkins/vars/main.yaml
+  roles:
+    - jenkins
+  post_tasks:
+    - name: Wait for Jenkins to be available
+      wait_for:
+        host: "{{ jenkins_master_ip }}"
+        port: 8080
+        timeout: 300
+        state: started
+      register: jenkins_up
+
+- name: Configure Docker Agent
+  hosts: tag_Purpose_docker_agent
+  become: yes
+  vars:
+    jenkins_master_ip: "{{ hostvars[groups['tag_Purpose_jenkins'][0]]['public_ip_address'] }}"
+    jenkins_home: /var/lib/jenkins
+    agent_workspace: /var/lib/jenkins
+    agent_name: "docker-agent"
+    agent_secret_path: "/jenkins/agents/docker"
+  roles:
+    - role: docker-agent
+
+- name: Configure Ansible Agent
+  hosts: tag_Purpose_ansible_agent
+  become: yes
+  vars:
+    jenkins_master_ip: "{{ hostvars[groups['tag_Purpose_jenkins'][0]]['ansible_default_ipv4']['address'] }}"
+    jenkins_home: /var/lib/jenkins
+    agent_workspace: /var/lib/jenkins
+    agent_name: "ansible-agent"
+    agent_secret_path: "/jenkins/agents/ansible"
+  roles:
+    - role: ansible-agent
