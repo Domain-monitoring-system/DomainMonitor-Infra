@@ -1,50 +1,181 @@
-# Domain Monitor Infrastructure
+# Domain Monitoring System - Infrastructure Repository
 
-Infrastructure as Code (IaC) for deploying the Domain Monitoring System, including Terraform configurations, Ansible roles, and Kubernetes manifests.
+This repository contains the infrastructure automation code for deploying and managing the Domain Monitoring System. The infrastructure is provisioned on AWS and configured using Ansible, with Jenkins handling the CI/CD pipeline.
 
-## Project Overview
+## Architecture Overview
 
-This repository contains the complete infrastructure configuration for the Domain Monitoring System, including:
+The infrastructure consists of several AWS EC2 instances with different roles:
 
-- Terraform configurations for AWS resources
-- Ansible roles for configuring EC2 instances
-- Kubernetes manifests for containerized deployments
+1. **Jenkins Master** - Orchestrates the CI/CD pipeline
+2. **Docker Agent** - Builds and tests Docker images
+3. **Ansible Agent** - Handles deployment to production servers
+4. **Production Servers** - Hosts the application
 
-## Ansible Role Details
+## Repository Structure
 
-### ansible-agent Role
+```
+├── roles/
+│   ├── jenkins/
+│   │   ├── tasks/
+│   │   │   └── main.yaml
+│   │   ├── templates/
+│   │   │   ├── init-script.groovy.j2
+│   │   │   ├── install-plugins.groovy.j2
+│   │   │   ├── node-creation.groovy.j2
+│   │   │   ├── docker-pipeline-creation.groovy.j2
+│   │   │   └── ansible-pipeline-creation.groovy.j2
+│   │   └── vars/
+│   │       └── main.yaml
+│   ├── docker-agent/
+│   │   ├── tasks/
+│   │   │   └── main.yaml
+│   │   └── templates/
+│   │       ├── service.sh.j2
+│   │       └── jenkins-agent.service.j2
+│   └── ansible-agent/
+│       ├── tasks/
+│       │   └── main.yaml
+│       └── templates/
+│           ├── service.sh.j2
+│           └── jenkins-agent.service.j2
+├── inventory_aws_ec2.yaml
+├── playbook.yaml
+├── main.tf
+└── README.md
+```
 
-This role prepares an EC2 instance to serve as a deployment agent by:
+## Deployment Flow
 
-1. Installing Ansible and required dependencies
-2. Copying security files from `roles/ansible-agent/files/`:
-   - SSH key (your private key file) for connecting to other instances
-   - AWS credentials for dynamic inventory
-   - AWS inventory configuration
-3. Cloning the deployment repository
-4. Setting up necessary permissions
+The infrastructure is provisioned and configured in the following sequence:
 
-The ansible-agent serves as the execution environment for the deployment playbooks and is triggered by the Jenkins pipeline during the CI/CD process.
+1. Terraform (`main.tf`) creates EC2 instances with appropriate tags
+2. Ansible dynamic inventory (`inventory_aws_ec2.yaml`) discovers instances based on tags
+3. Ansible playbook (`playbook.yaml`) configures the instances according to their roles
+4. Jenkins pipelines are automatically created during Jenkins master configuration
 
-## Required Customization for Your Environment
+## Terraform Resources
 
-Before deploying the infrastructure, you'll need to modify several configuration elements to match your environment:
+The Terraform configuration (`main.tf`) provisions:
 
-1. **SSH Key Name**: The current configuration uses a variable for the SSH key name:
+- 1 Jenkins master instance
+- 1 Docker agent instance
+- 1 Ansible agent instance
+- 2 Production instances
+- 1 Application Load Balancer with appropriate target groups
+
+Each instance is tagged with a `Purpose` tag that Ansible uses to identify its role.
+
+## Ansible Dynamic Inventory
+
+The dynamic inventory (`inventory_aws_ec2.yaml`) uses the AWS EC2 plugin to discover instances based on their tags:
+
+```yaml
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-west-2
+filters:
+  tag:Name: raziel_*
+  instance-state-name: running
+keyed_groups:
+  - key: tags.Purpose
+    prefix: tag_Purpose
+```
+
+This creates dynamic host groups like `tag_Purpose_jenkins`, `tag_Purpose_docker_agent`, etc.
+
+## Ansible Playbook
+
+The main playbook (`playbook.yaml`) configures each group of servers:
+
+1. Sets private IPs as facts for all hosts
+2. Configures the Jenkins master
+3. Configures the Docker agent
+4. Configures the Ansible agent
+
+### Jenkins Master Configuration
+
+The Jenkins master is set up with Docker to run Jenkins in a container. Key configuration steps:
+
+1. Install Docker and prerequisites
+2. Create Jenkins home directory
+3. Create init scripts and plugin configuration
+4. Run Jenkins container
+5. Create agent nodes
+6. Store agent secrets in AWS Secrets Manager
+7. Create pipelines using Groovy scripts
+8. Add Docker Hub credentials
+
+### Pipeline Creation Process
+
+The Jenkins pipelines are created automatically using Groovy scripts during configuration:
+
+1. `docker-pipeline-creation.groovy.j2` creates the Docker build pipeline
+2. `ansible-pipeline-creation.groovy.j2` creates the Ansible deployment pipeline
+
+These scripts:
+- Define the pipeline job
+- Configure Git SCM to fetch the repository
+- Point to the Jenkinsfile path
+- Assign the pipeline to run on the appropriate agent
+- Trigger an initial build
+
+### Agent Configuration
+
+Both Docker and Ansible agents are configured to connect to the Jenkins master using JNLP. The agent setup includes:
+
+1. Installing required software (Java, Docker, Ansible)
+2. Creating the agent workspace
+3. Downloading the agent JAR from the Jenkins master
+4. Fetching agent secrets from AWS Secrets Manager
+5. Creating and starting the agent service
+
+## Application Deployment
+
+The Domain Monitoring System deployment follows this flow:
+
+1. Developer pushes code to Git repository
+2. Jenkins Docker pipeline:
+   - Clones the repository
+   - Builds Docker images for frontend and backend
+   - Runs tests
+   - Pushes images to Docker Hub
+3. Jenkins Ansible pipeline:
+   - Deploys the application to production servers
+   - Configures the load balancer
+
+## AWS Integration
+
+The infrastructure makes use of AWS services:
+
+- **EC2** for compute instances
+- **ELB** for load balancing
+- **Secrets Manager** for storing Jenkins agent secrets
+- **IAM** for permissions
+
+## Setup Instructions
+
+### Prerequisites
+
+- AWS CLI configured with appropriate permissions
+- Terraform installed
+- Ansible installed with required collections:
+  ```
+  ansible-galaxy collection install amazon.aws
+  ```
+- SSH key pair for AWS EC2 instance access
+- Docker Hub account (for storing container images)
+
+### Required Customization
+
+Before deploying the infrastructure, you need to customize several configuration elements:
+
+1. **SSH Key Name**: The current configuration uses a key named "MoniNordic":
    ```terraform
-   variable "key_name" {
-     description = "Name of the AWS rsa key to use"
-     type        = string
-     default     = "MoniNordic"
-   }
+   key_name = "MoniNordic"
    ```
    You must either:
-   - Create a key pair with the name "MoniNordic" in AWS, OR
-   - Change the default value to match your existing key name, OR
-   - Override the variable when running Terraform:
-     ```bash
-     terraform apply -var="key_name=YOUR_KEY_NAME"
-     ```
+   - Create a key pair with this name in AWS, OR
+   - Change the key name in `main.tf` to match your existing key
 
 2. **AWS Region**: Update the region in both files:
    - In `main.tf`:
@@ -53,207 +184,196 @@ Before deploying the infrastructure, you'll need to modify several configuration
        region = "us-west-2"  # Change to your preferred region
      }
      ```
-   - In `inventory_aws_ec2.yaml`: Update the regions section as shown in the AWS Inventory customization section
+   - In `inventory_aws_ec2.yaml`: Update the regions section to match
 
-3. **Security Groups**: The current configuration uses a hardcoded security group ID:
+3. **Security Groups**: Update the security group IDs in `main.tf`:
    ```terraform
    vpc_security_group_ids = ["sg-02b3d29bdcd49a0cc"]  # Change to your security group ID
    ```
-   You'll need to:
-   - Create a security group with appropriate rules for your instances, OR
-   - Update this ID to match an existing security group you want to use
 
-4. **AMI ID**: The current configuration uses a specific Amazon Linux AMI:
+4. **AMI ID**: Update the AMI ID for your region:
    ```terraform
-   ami = "ami-05d38da78ce859165"  # Change to an appropriate AMI for your region
+   ami = "ami-05d38da78ce859165"  # Change to appropriate AMI for your region
    ```
-   AMI IDs vary by region, so you'll need to:
-   - Find an appropriate AMI ID for your chosen region
-   - Update this value in all instance resources
 
-### File Naming
+### Security-Sensitive Files
 
-When using your own SSH key and credentials:
+For security reasons, these files should be created locally and **NOT committed to the repository**:
 
-1. Place your private key file in the appropriate locations:
+1. **SSH private key** (.pem file): For AWS instance access
+2. **Docker credentials** (docker_credentials.yml): For Docker Hub access
+3. **AWS credentials** (aws_credentials): For AWS API access
+4. **Terraform state files** (terraform.tfstate): Contains sensitive infrastructure information
+
+Create these files:
+
+1. **SSH Key**: Ensure your key is available and has the right permissions:
    ```bash
-   # Replace YOUR_KEY_NAME.pem with your actual key filename
+   # Copy your key into the repository (but don't commit it!)
    cp /path/to/your/YOUR_KEY_NAME.pem .
    cp /path/to/your/YOUR_KEY_NAME.pem roles/ansible-agent/files/
    chmod 400 YOUR_KEY_NAME.pem
    chmod 400 roles/ansible-agent/files/YOUR_KEY_NAME.pem
    ```
 
-2. Update references in code to match your key name:
-   - Search for "MoniNordic" throughout the codebase and replace with your key name
-   - Check Ansible playbooks for hard-coded key paths
-
-## Components
-
-### Terraform (main.tf)
-
-Terraform configuration provisions the AWS infrastructure including:
-
-- EC2 instances for various roles (Jenkins, agents, production)
-- Security groups
-- Application Load Balancer
-- Networking components
-
-### Ansible Roles
-
-The Ansible roles configure the provisioned infrastructure:
-
-- **common_server**: Base configuration for all EC2 instances
-- **jenkins**: Jenkins server setup with required plugins and configurations
-- **docker_agent**: Build agent for Docker image creation and testing
-- **ansible_agent**: Deployment agent that pulls and runs the deployment repository
-
-### Kubernetes
-
-Kubernetes manifests for containerized deployments:
-
-- Backend API (BE.yaml)
-- Frontend Web UI (FE.yaml)
-- Database (db.yaml)
-- Supporting services and configurations
-
-## Initial Setup
-
-1. Clone the repository
-   ```bash
-   git clone https://github.com/RazielRey/domain-monitor-infra.git
-   cd domain-monitor-infra
+2. **Docker Credentials**: Create a file `roles/jenkins/vars/docker_credentials.yml`:
+   ```yaml
+   ---
+   docker_username: "your-dockerhub-username"
+   docker_password: "your-dockerhub-password-or-token"
    ```
+   This file is used by the Jenkins role to configure Docker Hub credentials in Jenkins.
 
-2. Place your AWS SSH key in the required locations
+3. **AWS Credentials**: If needed for the Ansible agent:
    ```bash
-   # Replace with your actual key filename
-   cp /path/to/your/YOUR_KEY_NAME.pem .
-   cp /path/to/your/YOUR_KEY_NAME.pem roles/ansible-agent/files/
-   chmod 400 YOUR_KEY_NAME.pem
-   chmod 400 roles/ansible-agent/files/YOUR_KEY_NAME.pem
-   ```
-
-3. Configure AWS credentials
-   ```bash
-   # Create or copy your AWS credentials file
    cp ~/.aws/credentials roles/ansible-agent/files/aws_credentials
    ```
 
-4. Update key names and region references as described in the "Required Customization" section
+### Deployment Steps
 
-5. Prepare for CI/CD pipeline by gathering:
-   - Docker Hub credentials (username and password/token)
-   - GitHub credentials (if using private repositories)
-   - These will be added to Jenkins after infrastructure deployment
-
-## Security-Sensitive Files
-
-For security reasons, the following files should be created locally and **NOT committed to the repository**:
-
-1. **Your SSH private key** (.pem file): For AWS instance access
-2. **aws_credentials**: AWS API credentials file
-3. **aws_accessKeys.csv**: AWS access key information
-4. **terraform.tfstate**: Terraform state file (contains sensitive information)
-
-> **IMPORTANT**: Never commit security credentials to Git repositories. The `.gitignore` file should exclude these sensitive files.
-
-## Usage
-
-### Terraform Deployment
-
-1. Initialize Terraform
-   ```bash
+1. **Initialize Terraform:**
+   ```
    terraform init
    ```
 
-2. Plan the infrastructure
-   ```bash
-   terraform plan
+2. **Create infrastructure with Terraform:**
    ```
-
-3. Apply the configuration
-   ```bash
    terraform apply
    ```
 
-### Ansible Configuration
-
-After Terraform has provisioned the infrastructure:
-
-1. Run the Ansible playbook
-   ```bash
+3. **Run Ansible playbook:**
+   ```
    ansible-playbook -i inventory_aws_ec2.yaml playbook.yaml
    ```
 
-### Jenkins Configuration
+4. **Access Jenkins:**
+   
+   After deployment, access Jenkins at:
+   ```
+   http://<jenkins-master-public-ip>:8080
+   ```
+   
+   Login with:
+   - Username: admin
+   - Password: admin
 
-After the infrastructure is provisioned and Jenkins is running:
+5. **Access the application:**
 
-1. Access the Jenkins UI using the public IP of the Jenkins instance
-2. Navigate to Manage Jenkins > Manage Credentials > System > Global credentials
-3. Add the required credentials:
-   - Add Docker Hub credentials with ID 'docker'
-   - Add any other credentials needed for the pipeline
-
-### Kubernetes Deployment
-
-For containerized deployments:
-
-1. Configure kubectl to access your cluster
-   ```bash
-   kubectl config use-context your-cluster-context
+   The application is accessible through the load balancer:
+   ```
+   http://<load-balancer-dns>
    ```
 
-2. Apply the Kubernetes manifests
-   ```bash
-   kubectl apply -f k8s/yamls/
+## Ansible Agent Architecture
+
+The Ansible agent plays a crucial role in the deployment workflow:
+
+1. **Installation**: The Ansible agent is configured with:
+   - Java (for Jenkins agent connectivity)
+   - Ansible (for running deployment playbooks)
+   - Docker (for container operations)
+   - Git and other dependencies
+
+2. **Configuration**: The agent is set up with:
+   - AWS credentials for dynamic inventory
+   - SSH keys for accessing other EC2 instances
+   - AWS EC2 inventory configuration
+
+3. **Integration**: The agent connects to Jenkins as a node and executes deployment pipelines
+
+### Deployment Workflow
+
+The deployment process works as follows:
+
+1. The Ansible agent connects to Jenkins as a node
+2. When a deployment pipeline is triggered in Jenkins, it:
+   - Runs on the Ansible agent (via `agent { label 'ansible' }` in Jenkinsfile)
+   - Checks out the deployment repository code
+   - Executes the deployment playbook against production servers
+
+3. The deployment playbook:
+   - Pulls the Docker images for frontend and backend
+   - Runs containers with proper configuration
+   - Verifies application health
+
+## Maintenance
+
+### Adding New Agents
+
+To add a new agent:
+
+1. Add a new EC2 instance with appropriate tags in Terraform
+2. Update the Ansible playbook to include configuration for the new agent
+3. Create a new agent in Jenkins
+
+### Docker Hub Credentials Management
+
+The Docker Hub credentials are used to push and pull Docker images during the CI/CD process:
+
+1. **Initial Setup**: In `roles/jenkins/vars/docker_credentials.yml`, provide your Docker Hub credentials:
+   ```yaml
+   docker_username: "your-dockerhub-username"
+   docker_password: "your-dockerhub-password-or-token"
    ```
 
-## Workflow Integration
+2. **Credential Usage**: These credentials are automatically added to Jenkins during setup using this code in `roles/jenkins/tasks/main.yaml`:
+   ```yaml
+   - name: Add Docker credentials in Jenkins
+     jenkins_script:
+       script: |
+         def dockerCreds = new com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl(
+           com.cloudbees.plugins.credentials.CredentialsScope.GLOBAL,
+           'docker',
+           'Docker Hub Credentials',
+           '{{ docker_username }}',
+           '{{ docker_password }}'
+         )
+         # ... additional code to store credentials ...
+   ```
 
-This infrastructure repository integrates with other components:
+3. **Pipeline Usage**: In the Jenkinsfile, the credentials are used like this:
+   ```groovy
+   withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+       sh """
+           echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
+           docker push ${IMAGE_NAME}:${TAG}
+       """
+   }
+   ```
 
-1. **Terraform** provisions the AWS resources
-2. **Ansible roles** configure the EC2 instances
-3. The **ansible_agent** role clones the deployment repository
-4. **Jenkins** pipeline in the deployment repo orchestrates application deployment
-5. **Kubernetes** manifests provide an alternative containerized deployment option
+4. **Credential Rotation**: To update Docker credentials:
+   - Update the `docker_credentials.yml` file
+   - Re-run the Ansible playbook to update Jenkins
+   - Alternatively, manually update in the Jenkins UI: Manage Jenkins > Manage Credentials
 
-## Terraform Resources
+### Updating Pipelines
 
-Key resources defined in main.tf:
+To update the CI/CD pipelines:
 
-- **EC2 Instances**: Jenkins server, Docker agent, Ansible agent, Production servers
-- **Application Load Balancer**: Distributes traffic to production instances
-- **Security Groups**: Controls access to instances
-- **Target Groups**: Routes traffic to appropriate instances
+1. Modify the Groovy template files in the Jenkins templates directory
+2. Re-run the Ansible playbook to apply changes
 
-## Prerequisites
+## Troubleshooting
 
-- [Terraform](https://www.terraform.io/downloads.html) v1.0.0+
-- [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/index.html) 2.9+
-- [kubectl](https://kubernetes.io/docs/tasks/tools/) for Kubernetes deployments
-- AWS CLI configured with appropriate credentials
-- AWS SSH key pair (you will need to update references in the code to match your key name)
+### Common Issues
 
-## Kubernetes Configuration
+1. **Jenkins agent connection issues:**
+   - Verify agent secrets in AWS Secrets Manager
+   - Check agent service status: `systemctl status jenkins-agent`
+   - Verify network connectivity between master and agent
 
-The Kubernetes manifests include:
+2. **Pipeline failures:**
+   - Check Jenkins logs: `docker logs jenkins`
+   - Verify Docker credentials are properly configured
+   - Ensure Git repository is accessible
 
-- Deployments for each application component
-- Services for internal and external access
-- RBAC configuration for permissions
-- Secrets for sensitive configuration
+3. **Load Balancer issues:**
+   - Check target group health
+   - Verify security group settings
+   - Confirm application health checks are passing
 
-## Contributing
+### Logs
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit your changes: `git commit -am 'Add my feature'`
-4. Push to the branch: `git push origin feature/my-feature`
-5. Submit a pull request
-
-## License
-
-[MIT License](LICENSE)
+- Jenkins logs: `docker logs jenkins`
+- Agent logs: `journalctl -u jenkins-agent`
+- Application logs: Check Docker container logs on production servers
