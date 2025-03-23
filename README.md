@@ -35,9 +35,13 @@ The infrastructure consists of several AWS EC2 instances with different roles:
 │   └── ansible-agent/
 │       ├── tasks/
 │       │   └── main.yaml
-│       └── templates/
-│           ├── service.sh.j2
-│           └── jenkins-agent.service.j2
+│       ├── templates/
+│       │   ├── service.sh.j2
+│       │   └── jenkins-agent.service.j2
+│       └── files/
+│           ├── aws_credentials           # AWS credentials file (not committed to repository)
+│           ├── MoniNordic.pem            # SSH private key (not committed to repository)
+│           └── inventory_aws_ec2.yaml    # AWS EC2 dynamic inventory file
 ├── inventory_aws_ec2.yaml
 ├── playbook.yaml
 ├── main.tf
@@ -209,12 +213,11 @@ Create these files:
 
 1. **SSH Key**: Ensure your key is available and has the right permissions:
    ```bash
-   # Copy your key into the repository (but don't commit it!)
-   cp /path/to/your/YOUR_KEY_NAME.pem .
+   # Copy your key into the ansible-agent files directory
    cp /path/to/your/YOUR_KEY_NAME.pem roles/ansible-agent/files/
-   chmod 400 YOUR_KEY_NAME.pem
    chmod 400 roles/ansible-agent/files/YOUR_KEY_NAME.pem
    ```
+   This key is used by the Ansible agent to SSH into the production servers during deployment.
 
 2. **Docker Credentials**: Create a file `roles/jenkins/vars/docker_credentials.yml`:
    ```yaml
@@ -224,10 +227,20 @@ Create these files:
    ```
    This file is used by the Jenkins role to configure Docker Hub credentials in Jenkins.
 
-3. **AWS Credentials**: If needed for the Ansible agent:
+3. **AWS Credentials**: Create a credentials file for the Ansible agent:
    ```bash
+   # Copy your AWS credentials file
    cp ~/.aws/credentials roles/ansible-agent/files/aws_credentials
    ```
+   The file should have this format:
+   ```ini
+   [default]
+   aws_access_key_id = YOUR_ACCESS_KEY
+   aws_secret_access_key = YOUR_SECRET_KEY
+   ```
+   These credentials are used by the Ansible agent to access the AWS EC2 dynamic inventory.
+
+4. **AWS EC2 Inventory**: The `inventory_aws_ec2.yaml` file in the `roles/ansible-agent/files/` directory is used by the Ansible agent to discover EC2 instances. This file is copied to the Ansible agent during setup.
 
 ### Deployment Steps
 
@@ -264,22 +277,46 @@ Create these files:
    http://<load-balancer-dns>
    ```
 
-## Ansible Agent Architecture
+## Ansible Agent Configuration
 
-The Ansible agent plays a crucial role in the deployment workflow:
+The ansible-agent plays a crucial role in the deployment workflow:
 
-1. **Installation**: The Ansible agent is configured with:
+### Ansible Agent Directory Structure
+
+The `roles/ansible-agent/` directory contains:
+
+```
+ansible-agent/
+├── tasks/
+│   └── main.yaml             # Main tasks for setting up the agent
+├── templates/
+│   ├── service.sh.j2         # Template for the agent service script
+│   └── jenkins-agent.service.j2  # Systemd service configuration
+└── files/
+    ├── aws_credentials       # AWS credentials for dynamic inventory
+    ├── MoniNordic.pem        # SSH private key for server access
+    └── inventory_aws_ec2.yaml  # AWS EC2 dynamic inventory configuration
+```
+
+### Ansible Agent Setup
+
+The Ansible agent is configured with:
+
+1. **Installation**: 
    - Java (for Jenkins agent connectivity)
    - Ansible (for running deployment playbooks)
    - Docker (for container operations)
    - Git and other dependencies
 
-2. **Configuration**: The agent is set up with:
-   - AWS credentials for dynamic inventory
-   - SSH keys for accessing other EC2 instances
-   - AWS EC2 inventory configuration
+2. **Configuration**: 
+   - AWS credentials are copied from `files/aws_credentials` to `/home/ubuntu/.aws/credentials` and `/root/.aws/credentials`
+   - SSH key is copied from `files/MoniNordic.pem` to `/etc/ansible/MoniNordic.pem`
+   - EC2 inventory is copied from `files/inventory_aws_ec2.yaml` to `/etc/ansible/inventory_aws_ec2.yaml`
 
-3. **Integration**: The agent connects to Jenkins as a node and executes deployment pipelines
+3. **Jenkins Agent Connectivity**:
+   - Agent JAR is downloaded from the Jenkins master
+   - Agent secret is fetched from AWS Secrets Manager
+   - A systemd service is created to run the agent and connect to Jenkins
 
 ### Deployment Workflow
 
