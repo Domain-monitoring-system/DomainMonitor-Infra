@@ -1,19 +1,18 @@
-# Domain Monitoring System - Infrastructure Repository
+# Domain Monitor Infrastructure
 
-This repository contains the infrastructure automation code for deploying and managing the Domain Monitoring System. The infrastructure is provisioned on AWS and configured using Ansible, with Jenkins handling the CI/CD pipeline.
+Infrastructure as Code (IaC) for deploying the Domain Monitoring System, including Terraform configurations and Ansible roles.
 
-## Architecture Overview
+## Project Overview
 
-The infrastructure consists of several AWS EC2 instances with different roles:
+This repository contains the complete infrastructure configuration for the Domain Monitoring System, including:
 
-1. **Jenkins Master** - Orchestrates the CI/CD pipeline
-2. **Docker Agent** - Builds and tests Docker images
-3. **Ansible Agent** - Handles deployment to production servers
-4. **Production Servers** - Hosts the application
+- Terraform configurations for AWS resources
+- Ansible roles for configuring EC2 instances
 
 ## Repository Structure
 
 ```
+domain-monitor-infra/
 ├── roles/
 │   ├── jenkins/
 │   │   ├── tasks/
@@ -42,132 +41,40 @@ The infrastructure consists of several AWS EC2 instances with different roles:
 │           ├── aws_credentials           # AWS credentials file (not committed to repository)
 │           ├── MoniNordic.pem            # SSH private key (not committed to repository)
 │           └── inventory_aws_ec2.yaml    # AWS EC2 dynamic inventory file
-├── inventory_aws_ec2.yaml
-├── playbook.yaml
-├── main.tf
-└── README.md
+├── main.tf                              # Main Terraform configuration
+├── inventory_aws_ec2.yaml               # Ansible dynamic inventory configuration
+├── playbook.yaml                        # Main Ansible playbook
+├── .gitignore
+└── README.md                            # This documentation
 ```
 
-## Deployment Flow
+## Components
 
-The infrastructure is provisioned and configured in the following sequence:
-
-1. Terraform (`main.tf`) creates EC2 instances with appropriate tags
-2. Ansible dynamic inventory (`inventory_aws_ec2.yaml`) discovers instances based on tags
-3. Ansible playbook (`playbook.yaml`) configures the instances according to their roles
-4. Jenkins pipelines are automatically created during Jenkins master configuration
-
-## Terraform Resources
+### Terraform Configuration
 
 The Terraform configuration (`main.tf`) provisions:
 
-- 1 Jenkins master instance
-- 1 Docker agent instance
-- 1 Ansible agent instance
-- 2 Production instances
-- 1 Application Load Balancer with appropriate target groups
+- EC2 instances for various roles (Jenkins, agents, production)
+- Security groups
+- Application Load Balancer
+- Networking components
 
-Each instance is tagged with a `Purpose` tag that Ansible uses to identify its role.
+### Ansible Roles
 
-## Ansible Dynamic Inventory
+The Ansible roles configure the provisioned infrastructure:
 
-The dynamic inventory (`inventory_aws_ec2.yaml`) uses the AWS EC2 plugin to discover instances based on their tags:
+- **jenkins**: Jenkins server setup with required plugins and configurations
+- **docker-agent**: Build agent for Docker image creation and testing
+- **ansible-agent**: Deployment agent that pulls and runs the deployment repository
 
-```yaml
-plugin: amazon.aws.aws_ec2
-regions:
-  - us-west-2
-filters:
-  tag:Name: raziel_*
-  instance-state-name: running
-keyed_groups:
-  - key: tags.Purpose
-    prefix: tag_Purpose
-```
-
-This creates dynamic host groups like `tag_Purpose_jenkins`, `tag_Purpose_docker_agent`, etc.
-
-## Ansible Playbook
-
-The main playbook (`playbook.yaml`) configures each group of servers:
-
-1. Sets private IPs as facts for all hosts
-2. Configures the Jenkins master
-3. Configures the Docker agent
-4. Configures the Ansible agent
-
-### Jenkins Master Configuration
-
-The Jenkins master is set up with Docker to run Jenkins in a container. Key configuration steps:
-
-1. Install Docker and prerequisites
-2. Create Jenkins home directory
-3. Create init scripts and plugin configuration
-4. Run Jenkins container
-5. Create agent nodes
-6. Store agent secrets in AWS Secrets Manager
-7. Create pipelines using Groovy scripts
-8. Add Docker Hub credentials
-
-### Pipeline Creation Process
-
-The Jenkins pipelines are created automatically using Groovy scripts during configuration:
-
-1. `docker-pipeline-creation.groovy.j2` creates the Docker build pipeline
-2. `ansible-pipeline-creation.groovy.j2` creates the Ansible deployment pipeline
-
-These scripts:
-- Define the pipeline job
-- Configure Git SCM to fetch the repository
-- Point to the Jenkinsfile path
-- Assign the pipeline to run on the appropriate agent
-- Trigger an initial build
-
-### Agent Configuration
-
-Both Docker and Ansible agents are configured to connect to the Jenkins master using JNLP. The agent setup includes:
-
-1. Installing required software (Java, Docker, Ansible)
-2. Creating the agent workspace
-3. Downloading the agent JAR from the Jenkins master
-4. Fetching agent secrets from AWS Secrets Manager
-5. Creating and starting the agent service
-
-## Application Deployment
-
-The Domain Monitoring System deployment follows this flow:
-
-1. Developer pushes code to Git repository
-2. Jenkins Docker pipeline:
-   - Clones the repository
-   - Builds Docker images for frontend and backend
-   - Runs tests
-   - Pushes images to Docker Hub
-3. Jenkins Ansible pipeline:
-   - Deploys the application to production servers
-   - Configures the load balancer
-
-## AWS Integration
-
-The infrastructure makes use of AWS services:
-
-- **EC2** for compute instances
-- **ELB** for load balancing
-- **Secrets Manager** for storing Jenkins agent secrets
-- **IAM** for permissions
-
-## Setup Instructions
+## Setup and Usage
 
 ### Prerequisites
 
-- AWS CLI configured with appropriate permissions
-- Terraform installed
-- Ansible installed with required collections:
-  ```
-  ansible-galaxy collection install amazon.aws
-  ```
-- SSH key pair for AWS EC2 instance access
-- Docker Hub account (for storing container images)
+- [Terraform](https://www.terraform.io/downloads.html) v1.0.0+
+- [Ansible](https://docs.ansible.com/ansible/latest/installation_guide/index.html) 2.9+
+- AWS CLI configured with appropriate credentials
+- AWS SSH key pair
 
 ### Required Customization
 
@@ -217,7 +124,6 @@ Create these files:
    cp /path/to/your/YOUR_KEY_NAME.pem roles/ansible-agent/files/
    chmod 400 roles/ansible-agent/files/YOUR_KEY_NAME.pem
    ```
-   This key is used by the Ansible agent to SSH into the production servers during deployment.
 
 2. **Docker Credentials**: Create a file `roles/jenkins/vars/docker_credentials.yml`:
    ```yaml
@@ -225,59 +131,59 @@ Create these files:
    docker_username: "your-dockerhub-username"
    docker_password: "your-dockerhub-password-or-token"
    ```
-   This file is used by the Jenkins role to configure Docker Hub credentials in Jenkins.
 
 3. **AWS Credentials**: Create a credentials file for the Ansible agent:
    ```bash
    # Copy your AWS credentials file
    cp ~/.aws/credentials roles/ansible-agent/files/aws_credentials
    ```
-   The file should have this format:
-   ```ini
-   [default]
-   aws_access_key_id = YOUR_ACCESS_KEY
-   aws_secret_access_key = YOUR_SECRET_KEY
-   ```
-   These credentials are used by the Ansible agent to access the AWS EC2 dynamic inventory.
 
-4. **AWS EC2 Inventory**: The `inventory_aws_ec2.yaml` file in the `roles/ansible-agent/files/` directory is used by the Ansible agent to discover EC2 instances. This file is copied to the Ansible agent during setup.
+### Deployment Workflow
 
-### Deployment Steps
+The infrastructure deployment workflow consists of:
 
-1. **Initialize Terraform:**
-   ```
+1. **Terraform Deployment**
+
+   ```bash
+   # Initialize Terraform
    terraform init
-   ```
 
-2. **Create infrastructure with Terraform:**
-   ```
+   # Plan the infrastructure
+   terraform plan
+
+   # Apply the configuration
    terraform apply
    ```
 
-3. **Run Ansible playbook:**
-   ```
+2. **Ansible Configuration**
+
+   After Terraform has provisioned the infrastructure:
+   ```bash
+   # Run the Ansible playbook
    ansible-playbook -i inventory_aws_ec2.yaml playbook.yaml
    ```
 
-4. **Access Jenkins:**
-   
-   After deployment, access Jenkins at:
-   ```
-   http://<jenkins-master-public-ip>:8080
-   ```
-   
-   Login with:
-   - Username: admin
-   - Password: admin
+## Integration with Tests and Deployment
 
-5. **Access the application:**
+This infrastructure repository works in conjunction with other repositories:
 
-   The application is accessible through the load balancer:
-   ```
-   http://<load-balancer-dns>
-   ```
+### Test Integration with domain-monitor-tests
+1. Tests are maintained in the domain-monitor-tests repository
+2. The Selenium test container is built from the test repository code
+3. Tests are executed as part of the CI/CD pipeline before deployment
+4. Test results determine whether deployment proceeds
 
-## Ansible Agent Configuration
+### Deployment Integration with domain-monitor-deploy
+1. The deployment repository contains Ansible playbooks and Jenkinsfile
+2. Jenkins pipelines built by this infrastructure execute those deployment configurations
+3. The ansible-agent role is configured to run those deployment steps
+
+### Kubernetes Integration with domain-monitor-k8s
+1. The separate Kubernetes repository contains all K8s configurations
+2. The CI/CD pipeline can update the Kubernetes manifests with new image tags
+3. The ansible-agent can apply Kubernetes changes as needed
+
+## Ansible Agent Architecture
 
 The ansible-agent plays a crucial role in the deployment workflow:
 
@@ -318,32 +224,7 @@ The Ansible agent is configured with:
    - Agent secret is fetched from AWS Secrets Manager
    - A systemd service is created to run the agent and connect to Jenkins
 
-### Deployment Workflow
-
-The deployment process works as follows:
-
-1. The Ansible agent connects to Jenkins as a node
-2. When a deployment pipeline is triggered in Jenkins, it:
-   - Runs on the Ansible agent (via `agent { label 'ansible' }` in Jenkinsfile)
-   - Checks out the deployment repository code
-   - Executes the deployment playbook against production servers
-
-3. The deployment playbook:
-   - Pulls the Docker images for frontend and backend
-   - Runs containers with proper configuration
-   - Verifies application health
-
-## Maintenance
-
-### Adding New Agents
-
-To add a new agent:
-
-1. Add a new EC2 instance with appropriate tags in Terraform
-2. Update the Ansible playbook to include configuration for the new agent
-3. Create a new agent in Jenkins
-
-### Docker Hub Credentials Management
+## Docker Hub Credentials Management
 
 The Docker Hub credentials are used to push and pull Docker images during the CI/CD process:
 
@@ -353,64 +234,42 @@ The Docker Hub credentials are used to push and pull Docker images during the CI
    docker_password: "your-dockerhub-password-or-token"
    ```
 
-2. **Credential Usage**: These credentials are automatically added to Jenkins during setup using this code in `roles/jenkins/tasks/main.yaml`:
-   ```yaml
-   - name: Add Docker credentials in Jenkins
-     jenkins_script:
-       script: |
-         def dockerCreds = new com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl(
-           com.cloudbees.plugins.credentials.CredentialsScope.GLOBAL,
-           'docker',
-           'Docker Hub Credentials',
-           '{{ docker_username }}',
-           '{{ docker_password }}'
-         )
-         # ... additional code to store credentials ...
-   ```
+2. **Credential Usage**: These credentials are automatically added to Jenkins during setup
 
-3. **Pipeline Usage**: In the Jenkinsfile, the credentials are used like this:
-   ```groovy
-   withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-       sh """
-           echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
-           docker push ${IMAGE_NAME}:${TAG}
-       """
-   }
-   ```
+3. **Pipeline Usage**: In the Jenkinsfile, the credentials are used to authenticate with Docker Hub
 
 4. **Credential Rotation**: To update Docker credentials:
    - Update the `docker_credentials.yml` file
    - Re-run the Ansible playbook to update Jenkins
    - Alternatively, manually update in the Jenkins UI: Manage Jenkins > Manage Credentials
 
-### Updating Pipelines
-
-To update the CI/CD pipelines:
-
-1. Modify the Groovy template files in the Jenkins templates directory
-2. Re-run the Ansible playbook to apply changes
-
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Jenkins agent connection issues:**
-   - Verify agent secrets in AWS Secrets Manager
-   - Check agent service status: `systemctl status jenkins-agent`
-   - Verify network connectivity between master and agent
+#### Ansible Connection Problems
+- Check that EC2 instances are running
+- Verify security groups allow SSH access
+- Ensure the inventory file correctly identifies hosts
 
-2. **Pipeline failures:**
-   - Check Jenkins logs: `docker logs jenkins`
-   - Verify Docker credentials are properly configured
-   - Ensure Git repository is accessible
+#### Jenkins Pipeline Failures
+- Check Jenkins console output for specific error messages
+- Verify Docker credentials are correctly configured
+- Ensure EC2 instances have sufficient resources
 
-3. **Load Balancer issues:**
-   - Check target group health
-   - Verify security group settings
-   - Confirm application health checks are passing
+#### Testing Issues
+- Review test logs for specific failure details
+- Check if the Selenium container can access the application
+- Verify that test dependencies are correctly installed
 
-### Logs
+## Contributing
 
-- Jenkins logs: `docker logs jenkins`
-- Agent logs: `journalctl -u jenkins-agent`
-- Application logs: Check Docker container logs on production servers
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -am 'Add my feature'`
+4. Push to the branch: `git push origin feature/my-feature`
+5. Submit a pull request
+
+## License
+
+[MIT License](LICENSE)
